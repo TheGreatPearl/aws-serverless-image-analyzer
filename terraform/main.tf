@@ -89,3 +89,35 @@ resource "aws_apigatewayv2_route" "get_images_route" {
   route_key = "GET /images"
   target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
 }
+
+# 7. Cognito User Pool & Client
+resource "aws_cognito_user_pool" "user_pool" {
+  name = "image-analyzer-user-pool"
+}
+
+resource "aws_cognito_user_pool_client" "user_pool_client" {
+  name         = "image-analyzer-app-client"
+  user_pool_id = aws_cognito_user_pool.user_pool.id
+}
+
+# 8. API Gateway JWT Authorizer
+resource "aws_apigatewayv2_authorizer" "cognito_authorizer" {
+  api_id           = aws_apigatewayv2_api.http_api.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "cognito-authorizer"
+
+  jwt_configuration {
+    audience = [aws_cognito_user_pool_client.user_pool_client.id]
+    issuer   = "https://cognito-idp.us-east-1.amazonaws.com/${aws_cognito_user_pool.user_pool.id}"
+  }
+}
+
+# Secured Route with Cognito Authorization
+resource "aws_apigatewayv2_route" "get_images_route" {
+  api_id             = aws_apigatewayv2_api.http_api.id
+  route_key          = "GET /images"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito_authorizer.id
+}
