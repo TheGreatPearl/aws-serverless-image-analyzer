@@ -1,26 +1,16 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-  required_version = ">= 1.2.0"
-}
-
 provider "aws" {
   region = "us-east-1"
 }
 
-# 1. S3 Bucket for Image Uploads
+# 1. S3 Bucket for Uploads
 resource "aws_s3_bucket" "image_bucket" {
-  bucket_prefix = "ai-image-analyzer-bucket-"
+  bucket        = "cloud-image-analyzer-bucket-v2"
   force_destroy = true
 }
 
 # 2. DynamoDB Table for Metadata
 resource "aws_dynamodb_table" "image_metadata" {
-  name         = "ImageMetadata"
+  name         = "ImageMetadata-v2"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "ImageID"
 
@@ -30,71 +20,105 @@ resource "aws_dynamodb_table" "image_metadata" {
   }
 }
 
-# 3. SNS Topic for Notifications
-resource "aws_sns_topic" "image_alerts" {
-  name = "ImageAnalysisAlerts"
-}
-
-# 4. IAM Role for Lambda Function
+# 3. IAM Role for Lambda
 resource "aws_iam_role" "lambda_exec_role" {
-  name = "serverless_image_analyzer_lambda_role"
+  name = "serverless_image_analyzer_lambda_role_v2"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "lambda.amazonaws.com" }
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
     }]
   })
 }
 
-# IAM Policy attaching necessary permissions
-resource "aws_iam_role_policy_attachment" "lambda_policy" {
+# 4. IAM Policy for Lambda (DynamoDB, S3, CloudWatch)
+resource "aws_iam_policy" "lambda_policy" {
+  name        = "serverless_image_analyzer_policy_v2"
+  description = "IAM policy for Lambda to access DynamoDB, S3 and CloudWatch"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:GetItem",
+          "dynamodb:Scan"
+        ]
+        Resource = "${aws_dynamodb_table.image_metadata.arn}"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = "${aws_s3_bucket.image_bucket.arn}/*"
+      }
+    ]
+  })
+}
+
+# Attach Policy to Role
+resource "aws_iam_role_policy_attachment" "lambda_policy_attach" {
   role       = aws_iam_role.lambda_exec_role.name
-  policy_arn = "arn:aws:iam::aws:policy/PowerUserAccess" # For demo purposes
+  policy_arn = aws_iam_policy.lambda_policy.arn
 }
 
 # 5. Lambda Function
-resource "aws_lambda_function" "image_processor" {
-  filename      = "lambda.zip" # Dummy archive name for IaC declaration
-  function_name = "ImageAnalyzerFunction"
-  role          = aws_iam_role.lambda_exec_role.arn
-  handler       = "lambda_function.lambda_handler"
-  runtime       = "python3.11"
+resource "aws_lambda_function" "analyzer_lambda" {
+  filename         = "../lambda_function.zip"
+  function_name    = "image_analyzer_lambda_v2"
+  role             = aws_iam_role.lambda_exec_role.arn
+  handler          = "lambda_function.lambda_handler"
+  runtime          = "python3.11"
+  source_code_hash = filebase64sha256("../lambda_function.zip")
 
   environment {
     variables = {
-      TABLE_NAME    = aws_dynamodb_table.image_metadata.name
-      SNS_TOPIC_ARN = aws_sns_topic.image_alerts.arn
+      TABLE_NAME = aws_dynamodb_table.image_metadata.name
     }
   }
 }
 
-# 6. API Gateway (HTTP API)
+# 6. HTTP API Gateway
 resource "aws_apigatewayv2_api" "http_api" {
-  name          = "image-analyzer-api"
+  name          = "image-analyzer-api-v2"
   protocol_type = "HTTP"
 }
 
+# API Gateway Integration with Lambda
 resource "aws_apigatewayv2_integration" "lambda_integration" {
-  api_id                 = aws_apigatewayv2_api.http_api.id
-  integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.image_processor.invoke_arn
-  payload_format_version = "2.0"
+  api_id           = aws_apigatewayv2_api.http_api.id
+  integration_type = "AWS_PROXY"
+  integration_uri  = aws_lambda_function.analyzer_lambda.invoke_arn
 }
 
 # 7. Cognito User Pool & Client
 resource "aws_cognito_user_pool" "user_pool" {
-  name = "image-analyzer-user-pool"
+  name = "image-analyzer-user-pool-v2"
 }
 
 resource "aws_cognito_user_pool_client" "user_pool_client" {
-  name         = "image-analyzer-app-client"
+  name         = "image-analyzer-app-client-v2"
   user_pool_id = aws_cognito_user_pool.user_pool.id
 }
 
-# 8. API Gateway JWT Authorizer
+# 8. API Gateway Authorizer
 resource "aws_apigatewayv2_authorizer" "cognito_authorizer" {
   api_id           = aws_apigatewayv2_api.http_api.id
   authorizer_type  = "JWT"
@@ -107,11 +131,27 @@ resource "aws_apigatewayv2_authorizer" "cognito_authorizer" {
   }
 }
 
-# Secured Route with Cognito Authorization
+# 9. Secured Route with Cognito Authorization
 resource "aws_apigatewayv2_route" "get_images_route" {
   api_id             = aws_apigatewayv2_api.http_api.id
   route_key          = "GET /images"
   target             = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.cognito_authorizer.id
+}
+
+# 10. API Gateway Stage
+resource "aws_apigatewayv2_stage" "default_stage" {
+  api_id      = aws_apigatewayv2_api.http_api.id
+  name        = "$default"
+  auto_deploy = true
+}
+
+# Permission for API Gateway to invoke Lambda
+resource "aws_lambda_permission" "api_gateway_permission" {
+  statement_id  = "AllowExecutionFromAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.analyzer_lambda.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
 }
