@@ -82,13 +82,7 @@ resource "aws_apigatewayv2_integration" "lambda_integration" {
   integration_type       = "AWS_PROXY"
   integration_uri        = aws_lambda_function.image_processor.invoke_arn
   payload_format_version = "2.0"
-}
 
-resource "aws_apigatewayv2_route" "get_images_route" {
-  api_id    = aws_apigatewayv2_api.http_api.id
-  route_key = "GET /images"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
-}
 
 # 7. Cognito User Pool & Client
 resource "aws_cognito_user_pool" "user_pool" {
