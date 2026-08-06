@@ -36,10 +36,10 @@ resource "aws_iam_role" "lambda_exec_role" {
   })
 }
 
-# 4. IAM Policy for Lambda (DynamoDB, S3, CloudWatch)
+# 4. IAM Policy for Lambda (DynamoDB, S3, CloudWatch, Rekognition)
 resource "aws_iam_policy" "lambda_policy" {
   name        = "serverless_image_analyzer_policy_v2"
-  description = "IAM policy for Lambda to access DynamoDB, S3 and CloudWatch"
+  description = "IAM policy for Lambda to access DynamoDB, S3, Rekognition, and CloudWatch"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -68,6 +68,13 @@ resource "aws_iam_policy" "lambda_policy" {
           "s3:GetObject"
         ]
         Resource = "${aws_s3_bucket.image_bucket.arn}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "rekognition:DetectLabels"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -85,6 +92,7 @@ data "archive_file" "lambda_zip" {
   source_file = "${path.module}/../lambda_function.py"
   output_path = "${path.module}/../lambda_function.zip"
 }
+
 # 5. Lambda Function
 resource "aws_lambda_function" "analyzer_lambda" {
   filename         = data.archive_file.lambda_zip.output_path
@@ -100,6 +108,28 @@ resource "aws_lambda_function" "analyzer_lambda" {
     }
   }
 }
+
+# 5a. S3 Trigger Permission for Lambda
+resource "aws_lambda_permission" "allow_s3_bucket" {
+  statement_id  = "AllowExecutionFromS3Bucket"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.analyzer_lambda.arn
+  principal     = "s3.amazonaws.com"
+  source_arn    = aws_s3_bucket.image_bucket.arn
+}
+
+# 5b. S3 Bucket Notification Trigger
+resource "aws_s3_bucket_notification" "bucket_notification" {
+  bucket = aws_s3_bucket.image_bucket.id
+
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.analyzer_lambda.arn
+    events              = ["s3:ObjectCreated:*"]
+  }
+
+  depends_on = [aws_lambda_permission.allow_s3_bucket]
+}
+
 # 6. HTTP API Gateway
 resource "aws_apigatewayv2_api" "http_api" {
   name          = "image-analyzer-api-v2"
