@@ -82,7 +82,7 @@ resource "aws_apigatewayv2_integration" "lambda_integration" {
   integration_type       = "AWS_PROXY"
   integration_uri        = aws_lambda_function.image_processor.invoke_arn
   payload_format_version = "2.0"
-
+}
 
 # 7. Cognito User Pool & Client
 resource "aws_cognito_user_pool" "user_pool" {
