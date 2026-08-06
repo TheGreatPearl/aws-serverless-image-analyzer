@@ -79,14 +79,20 @@ resource "aws_iam_role_policy_attachment" "lambda_policy_attach" {
   policy_arn = aws_iam_policy.lambda_policy.arn
 }
 
+# Automatic ZIP packaging for Lambda code
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "${path.module}/../lambda_function.py"
+  output_path = "${path.module}/../lambda_function.zip"
+}
 # 5. Lambda Function
 resource "aws_lambda_function" "analyzer_lambda" {
-  filename         = "../lambda_function.zip"
+  filename         = data.archive_file.lambda_zip.output_path
   function_name    = "image_analyzer_lambda_v2"
   role             = aws_iam_role.lambda_exec_role.arn
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.11"
-  source_code_hash = filebase64sha256("../lambda_function.zip")
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
 
   environment {
     variables = {
@@ -94,7 +100,6 @@ resource "aws_lambda_function" "analyzer_lambda" {
     }
   }
 }
-
 # 6. HTTP API Gateway
 resource "aws_apigatewayv2_api" "http_api" {
   name          = "image-analyzer-api-v2"
