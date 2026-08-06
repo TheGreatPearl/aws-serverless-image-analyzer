@@ -9,7 +9,8 @@ dynamodb = boto3.resource("dynamodb")
 rekognition = boto3.client("rekognition")
 sns = boto3.client("sns")
 
-TABLE_NAME = os.environ.get("TABLE_NAME", "ImageMetadata")
+# עדכון שם ברירת המחדל ל-ImageMetadata-v2
+TABLE_NAME = os.environ.get("TABLE_NAME", "ImageMetadata-v2")
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN")
 table = dynamodb.Table(TABLE_NAME)
 
@@ -22,7 +23,10 @@ def lambda_handler(event, context):
 
         return {
             "statusCode": 200,
-            "headers": {"Content-Type": "application/json"},
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*"
+            },
             "body": json.dumps(items),
         }
 
